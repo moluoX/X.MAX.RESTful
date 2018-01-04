@@ -6,5 +6,6 @@ namespace X.MAX.RESTful.Client
     {
         TRes Invoke<TReq, TRes>(TReq req);
         IRESTSerializer Serializer { get; set; }
+        int TimeoutMillisecond { get; set; }
     }
 }

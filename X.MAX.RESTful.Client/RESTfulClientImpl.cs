@@ -9,45 +9,56 @@ namespace X.MAX.RESTful.Client
     public class RESTfulClientImpl : IRESTfulClient
     {
         public IRESTSerializer Serializer { get; set; }
+        public int TimeoutMillisecond { get; set; }
 
         public TRes Invoke<TReq, TRes>(TReq req)
         {
-            try
+            //请求
+            string url = Utility.AnalyzeUri(req);
+            var request = HttpWebRequest.CreateHttp(url);
+            request.Timeout = TimeoutMillisecond;
+            request.Method = "POST";
+
+            //body
+            var body = Serializer.Serialize(req);
+            var bodyBytes = Encoding.UTF8.GetBytes(body);
+            request.ContentLength = bodyBytes.LongLength;
+            using (Stream requestStream = request.GetRequestStream())
             {
-                string url = Utility.AnalyzeUri(req);
-                var request = HttpWebRequest.CreateHttp(url);
-                request.Timeout = 10000;
-                request.Method = "POST";
-                _log.Info(string.Format("[RESTfulClientImpl.Invoke]http请求,{0}", url));
+                requestStream.Write(bodyBytes, 0, bodyBytes.Length);
+                requestStream.Close();
+            }
 
-                //回应
-                using (var response = request.GetResponse() as HttpWebResponse)
+            //回应
+            string content;
+            int code;
+            using (var response = request.GetResponse() as HttpWebResponse)
+            {
+                code = (int)response.StatusCode;
+                using (StreamReader sr = new StreamReader(response.GetResponseStream()))
                 {
-                    var code = (int)response.StatusCode;
-                    if (code < 200 || code >= 300)
-                        throw new Exception(string.Format("http响应{0}", code));
-
-                    using (StreamReader sr = new StreamReader(response.GetResponseStream()))
-                    {
-                        string content = sr.ReadToEnd();
-                        if (string.IsNullOrWhiteSpace(content))
-                            throw new Exception(string.Format("http响应内容为空"));
-
-                        _log.Info(string.Format("[RESTfulClientImpl.Invoke]http响应{0},{1}\r\n{2}", code, url, content));
-
-                        dynamic resObj = Newtonsoft.Json.JsonConvert.DeserializeObject(content);
-                        if (resObj.success == true)
-                            return resObj.data ?? 0m;
-                        else
-                            throw new Exception(string.Format("接口返回失败"));
-                    }
+                    content = sr.ReadToEnd();
                 }
             }
-            catch (Exception ex)
+
+            RESTFulInvokeExceptionInfo exceptionInfo;
+            if (code < 200 || code >= 300)
             {
-                _log.Error(string.Format("[RESTfulClientImpl.Invoke]异常,{0}", idCard), ex);
-                throw;
+                if (string.IsNullOrWhiteSpace(content))
+                    exceptionInfo = new RESTFulInvokeExceptionInfo { type = "100001", message = "操作失败" };
+                exceptionInfo = Serializer.Deserialize<RESTFulInvokeExceptionInfo>(content);
+                if (exceptionInfo == null)
+                    exceptionInfo = new RESTFulInvokeExceptionInfo { type = "100002", message = "操作失败", messageDetail = content };
+                exceptionInfo.url = url;
+                exceptionInfo.code = code;
+
+                throw new RESTFulInvokeException(exceptionInfo);
             }
+
+            if (string.IsNullOrWhiteSpace(content))
+                return default(TRes);
+            var resObj = Serializer.Deserialize<TRes>(content);
+            return resObj;
         }
     }
 }
